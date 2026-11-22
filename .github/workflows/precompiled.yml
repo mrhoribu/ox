@@ -83,7 +83,7 @@ jobs:
   # macOS and Windows: install on the runner's own Ruby.
   test-native-gem:
     name: Test ${{ matrix.target.platform }} gem (Ruby ${{ matrix.ruby }})
-    needs: native-gem
+    needs: [source-gem, native-gem]
     runs-on: ${{ matrix.target.os }}
     timeout-minutes: 20
     strategy:
@@ -103,8 +103,9 @@ jobs:
           ruby-version: ${{ matrix.ruby }}
       - uses: actions/download-artifact@v8
         with:
-          name: gem-${{ matrix.target.platform }}
+          pattern: gem-{ruby,${{ matrix.target.platform }}}
           path: gems
+          merge-multiple: true
       - run: sh .github/scripts/test-installed-gem.sh ${{ matrix.target.platform }} gems
         shell: bash
 
@@ -112,7 +113,7 @@ jobs:
   # compiler, so a gem that tried to build its extension there would fail.
   test-native-gem-linux:
     name: Test ${{ matrix.target.platform }} gem (Ruby ${{ matrix.ruby }})
-    needs: native-gem
+    needs: [source-gem, native-gem]
     runs-on: ${{ matrix.target.os }}
     timeout-minutes: 30
     strategy:
@@ -132,8 +133,9 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
-          name: gem-${{ matrix.target.platform }}
+          pattern: gem-{ruby,${{ matrix.target.platform }}}
           path: gems
+          merge-multiple: true
       - name: Set up QEMU
         if: matrix.target.docker-platform == 'linux/arm/v7'
         uses: docker/setup-qemu-action@v4
