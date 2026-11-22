@@ -2,10 +2,65 @@
 
 require 'bundler/gem_tasks'
 require 'rake/extensiontask'
+require 'rubygems/package_task'
 require 'rake/testtask'
 
-Rake::ExtensionTask.new('ox') do |ext|
+# Platforms that get a precompiled native gem, published alongside the source
+# gem so most users install Ox without a C toolchain. Each one is built inside
+# a rake-compiler-dock container; see the gem:native tasks below and
+# .github/workflows/precompiled.yml.
+#
+# x64-mingw-ucrt is the RubyInstaller platform for Ruby 3.1 and later. The
+# *-linux-gnu and *-linux-musl gems are built separately because the
+# rake-compiler-dock docs say not to mix a bare *-linux gem with *-linux-musl.
+NATIVE_PLATFORMS = [
+  'aarch64-linux-gnu',
+  'aarch64-linux-musl',
+  'arm-linux-gnu',
+  'arm-linux-musl',
+  'arm64-darwin',
+  'x64-mingw-ucrt',
+  'x86_64-darwin',
+  'x86_64-linux-gnu',
+  'x86_64-linux-musl'
+].freeze
+
+# Ruby minor versions compiled into each native gem. Rubies outside this list
+# fall back to the source gem and compile it as before.
+NATIVE_RUBY_VERSIONS = ['4.0', '3.4', '3.3', '3.2', '3.1'].freeze
+
+GEMSPEC = Gem::Specification.load('ox.gemspec')
+
+# Defines the gem task that rake-compiler hooks to package native gems into pkg/.
+Gem::PackageTask.new(GEMSPEC).define
+
+Rake::ExtensionTask.new('ox', GEMSPEC) do |ext|
   ext.lib_dir = 'lib/ox'
+  ext.cross_compile = true
+  ext.cross_platform = NATIVE_PLATFORMS
+  ext.cross_compiling do |spec|
+    # The native gem ships compiled binaries, so drop the C sources from it.
+    spec.files.reject! { |path| File.fnmatch?('ext/**/*.{c,h}', path, File::FNM_EXTGLOB) }
+  end
+end
+
+namespace :gem do
+  namespace :native do
+    NATIVE_PLATFORMS.each do |platform|
+      desc "Build the precompiled #{platform} gem with rake-compiler-dock"
+      task platform do
+        require 'rake_compiler_dock'
+        RakeCompilerDock.set_ruby_cc_version(*NATIVE_RUBY_VERSIONS)
+        # The container image ships a patched rake-compiler and the cross
+        # rubies, so this runs plain rake rather than bundle exec.
+        RakeCompilerDock.sh("rake native:#{platform} gem RUBY_CC_VERSION=#{ENV.fetch('RUBY_CC_VERSION')}",
+                            platform: platform)
+      end
+    end
+  end
+
+  desc 'Build the precompiled gems for every native platform'
+  task native: NATIVE_PLATFORMS.map { |platform| "gem:native:#{platform}" }
 end
 
 # test_all invokes this. Without it Rake::Task['test'] silently resolved to a

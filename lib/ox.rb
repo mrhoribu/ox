@@ -75,5 +75,10 @@ require 'ox/document'
 require 'ox/bag'
 require 'ox/sax'
 
-# C extension
-require 'ox/ox'
+# C extension. A precompiled native gem ships one binary per Ruby minor
+# version under ox/<major.minor>/; the source gem compiles a single ox/ox.
+begin
+  require "ox/#{RUBY_VERSION[/\A\d+\.\d+/]}/ox"
+rescue LoadError
+  require 'ox/ox'
+end
