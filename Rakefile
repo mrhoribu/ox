@@ -39,6 +39,17 @@ NATIVE_PLATFORMS = [
 # fall back to the source gem and compile it as before.
 NATIVE_RUBY_VERSIONS = ['4.0', '3.4', '3.3', '3.2', '3.1'].freeze
 
+# Binaries rake-compiler-dock leaves unstripped, and the strip that fixes them.
+# Its cross rubies are linked with -s everywhere but Windows ARM64 and macOS, and
+# extensions inherit that, so those two still carry symbols: DWARF debug info
+# and a symbol table on Windows ARM64, which is about three quarters of each DLL,
+# and local symbols on macOS, where the container's strip re-signs the binary.
+NATIVE_STRIP = {
+  'aarch64-mingw-ucrt' => 'aarch64-w64-mingw32-strip --strip-all',
+  'arm64-darwin' => 'aarch64-apple-darwin-strip -x',
+  'x86_64-darwin' => 'x86_64-apple-darwin-strip -x'
+}.freeze
+
 # Platforms with fewer Rubies: RubyInstaller for Windows on ARM64, and so
 # rake-compiler-dock's cross rubies for it, start at Ruby 3.4.
 NATIVE_RUBY_VERSIONS_FOR = Hash.new(NATIVE_RUBY_VERSIONS).merge(
@@ -55,9 +66,23 @@ Rake::ExtensionTask.new('ox', GEMSPEC) do |ext|
   ext.cross_compile = true
   ext.cross_platform = NATIVE_PLATFORMS
   ext.cross_compiling do |spec|
-    # The native gem ships compiled binaries, so drop the C sources from it.
-    spec.files.reject! { |path| File.fnmatch?('ext/**/*.{c,h}', path, File::FNM_EXTGLOB) }
+    # The native gem ships compiled binaries, so nothing under ext/ is needed:
+    # not the C sources, and not extconf.rb, as a native gem has no extensions
+    # to build. lib/ is then the only load path.
+    spec.files.reject! { |path| path.start_with?('ext/') }
+    spec.require_paths = ['lib']
   end
+end
+
+# Strip each binary in NATIVE_STRIP as soon as it is compiled, so every copy
+# made from it on the way into the native gem is stripped too. The compile
+# tasks for those platforms only exist where their cross rubies do, inside the
+# rake-compiler-dock container.
+Rake::Task.tasks.each do |task|
+  platform = task.name[%r{\Atmp/([^/]+)/ox/\d+\.\d+\.\d+/ox\.(?:so|bundle)\z}, 1]
+  strip = NATIVE_STRIP[platform] or next
+
+  task.enhance { sh "#{strip} #{task.name}" }
 end
 
 namespace :gem do

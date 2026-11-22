@@ -77,6 +77,17 @@ jobs:
           ruby-version: '4.0'
           bundler-cache: true
       - run: bundle exec rake gem:native:${{ matrix.platform }}
+      - name: Check the gem carries only what a native gem needs
+        run: |
+          # shellcheck disable=SC2016 # Ruby code, not shell expansions
+          ruby -rrubygems/package -e '
+            gem = Dir["pkg/*-#{ARGV[0]}.gem"].first or abort "no #{ARGV[0]} gem built"
+            spec = Gem::Package.new(gem).spec
+            abort "ships ext/ files: #{spec.files.grep(%r{\Aext/})}" if spec.files.any? { |f| f.start_with?("ext/") }
+            abort "require_paths is #{spec.require_paths}" unless spec.require_paths == ["lib"]
+            abort "declares extensions: #{spec.extensions}" unless spec.extensions.empty?
+            puts spec.files
+          ' ${{ matrix.platform }}
       - uses: actions/upload-artifact@v7
         with:
           name: gem-${{ matrix.platform }}
