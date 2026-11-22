@@ -10,16 +10,26 @@ require 'rake/testtask'
 # a rake-compiler-dock container; see the gem:native tasks below and
 # .github/workflows/precompiled.yml.
 #
-# x64-mingw-ucrt is the RubyInstaller platform for Ruby 3.1 and later. The
+# x64-mingw-ucrt and aarch64-mingw-ucrt are the RubyInstaller platforms for
+# Windows on x64 (Ruby 3.1 and later) and ARM64 (Ruby 3.4 and later). The
 # *-linux-gnu and *-linux-musl gems are built separately because the
 # rake-compiler-dock docs say not to mix a bare *-linux gem with *-linux-musl.
+#
+# The 32-bit glibc gems (arm-linux-gnu, x86-linux-gnu) are built against a Ruby
+# with a 32-bit time_t but can be installed on one built with a 64-bit time_t,
+# as Debian 13 and Ubuntu 24.04 do on 32-bit ARM. That is safe because Ox does
+# not pass time_t to Ruby when it is built against a 32-bit one; see
+# ext/ox/time_conv.h.
 NATIVE_PLATFORMS = [
   'aarch64-linux-gnu',
   'aarch64-linux-musl',
+  'aarch64-mingw-ucrt',
   'arm-linux-gnu',
   'arm-linux-musl',
   'arm64-darwin',
   'x64-mingw-ucrt',
+  'x86-linux-gnu',
+  'x86-linux-musl',
   'x86_64-darwin',
   'x86_64-linux-gnu',
   'x86_64-linux-musl'
@@ -28,6 +38,12 @@ NATIVE_PLATFORMS = [
 # Ruby minor versions compiled into each native gem. Rubies outside this list
 # fall back to the source gem and compile it as before.
 NATIVE_RUBY_VERSIONS = ['4.0', '3.4', '3.3', '3.2', '3.1'].freeze
+
+# Platforms with fewer Rubies: RubyInstaller for Windows on ARM64, and so
+# rake-compiler-dock's cross rubies for it, start at Ruby 3.4.
+NATIVE_RUBY_VERSIONS_FOR = Hash.new(NATIVE_RUBY_VERSIONS).merge(
+  'aarch64-mingw-ucrt' => ['4.0', '3.4']
+).freeze
 
 GEMSPEC = Gem::Specification.load('ox.gemspec')
 
@@ -50,7 +66,7 @@ namespace :gem do
       desc "Build the precompiled #{platform} gem with rake-compiler-dock"
       task platform do
         require 'rake_compiler_dock'
-        RakeCompilerDock.set_ruby_cc_version(*NATIVE_RUBY_VERSIONS)
+        RakeCompilerDock.set_ruby_cc_version(*NATIVE_RUBY_VERSIONS_FOR[platform])
         # The container image ships a patched rake-compiler and the cross
         # rubies, so this runs plain rake rather than bundle exec.
         RakeCompilerDock.sh("rake native:#{platform} gem RUBY_CC_VERSION=#{ENV.fetch('RUBY_CC_VERSION')}",

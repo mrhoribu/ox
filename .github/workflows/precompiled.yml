@@ -58,10 +58,13 @@ jobs:
         platform:
           - aarch64-linux-gnu
           - aarch64-linux-musl
+          - aarch64-mingw-ucrt
           - arm-linux-gnu
           - arm-linux-musl
           - arm64-darwin
           - x64-mingw-ucrt
+          - x86-linux-gnu
+          - x86-linux-musl
           - x86_64-darwin
           - x86_64-linux-gnu
           - x86_64-linux-musl
@@ -80,20 +83,27 @@ jobs:
           path: pkg/*-${{ matrix.platform }}.gem
           if-no-files-found: error
 
-  # macOS and Windows: install on the runner's own Ruby.
+  # macOS and Windows: install on the runner's own Ruby, on matching hardware.
   test-native-gem:
-    name: Test ${{ matrix.target.platform }} gem (Ruby ${{ matrix.ruby }})
+    name: Test ${{ matrix.platform }} gem (Ruby ${{ matrix.ruby }})
     needs: [source-gem, native-gem]
-    runs-on: ${{ matrix.target.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - { platform: arm64-darwin, os: macos-latest }
-          - { platform: x86_64-darwin, os: macos-15-intel }
-          - { platform: x64-mingw-ucrt, os: windows-latest }
+        platform: [arm64-darwin, x86_64-darwin, x64-mingw-ucrt, aarch64-mingw-ucrt]
         ruby: ['3.1', '3.2', '3.3', '3.4', '4.0']
+        include:
+          - { platform: arm64-darwin, os: macos-latest }
+          - { platform: x86_64-darwin, os: macos-26-intel }
+          - { platform: x64-mingw-ucrt, os: windows-latest }
+          - { platform: aarch64-mingw-ucrt, os: windows-11-arm }
+        exclude:
+          # RubyInstaller for Windows on ARM64 starts at Ruby 3.4.
+          - { platform: aarch64-mingw-ucrt, ruby: '3.1' }
+          - { platform: aarch64-mingw-ucrt, ruby: '3.2' }
+          - { platform: aarch64-mingw-ucrt, ruby: '3.3' }
     steps:
       - uses: actions/checkout@v7
         with:
@@ -103,50 +113,64 @@ jobs:
           ruby-version: ${{ matrix.ruby }}
       - uses: actions/download-artifact@v8
         with:
-          pattern: gem-{ruby,${{ matrix.target.platform }}}
+          pattern: gem-{ruby,${{ matrix.platform }}}
           path: gems
           merge-multiple: true
-      - run: sh .github/scripts/test-installed-gem.sh ${{ matrix.target.platform }} gems
+      - run: sh .github/scripts/test-installed-gem.sh ${{ matrix.platform }} gems
         shell: bash
 
   # Linux: install inside the official Ruby images. The Alpine images have no C
   # compiler, so a gem that tried to build its extension there would fail.
+  # linux/386 runs natively on the x64 runner and linux/arm/v7 under QEMU on the
+  # arm64 one. For arm-linux-gnu, ruby:3.1 (Debian 12) has a 32-bit time_t and
+  # ruby:3.4 and later (Debian 13) a 64-bit one, so both are covered.
   test-native-gem-linux:
-    name: Test ${{ matrix.target.platform }} gem (Ruby ${{ matrix.ruby }})
+    name: Test ${{ matrix.platform }} gem (Ruby ${{ matrix.ruby }})
     needs: [source-gem, native-gem]
-    runs-on: ${{ matrix.target.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        target:
+        platform:
+          - x86_64-linux-gnu
+          - x86_64-linux-musl
+          - x86-linux-gnu
+          - x86-linux-musl
+          - aarch64-linux-gnu
+          - aarch64-linux-musl
+          - arm-linux-gnu
+          - arm-linux-musl
+        ruby: ['3.1', '3.2', '3.3', '3.4', '4.0']
+        include:
           - { platform: x86_64-linux-gnu, os: ubuntu-latest, image: '', docker-platform: linux/amd64 }
           - { platform: x86_64-linux-musl, os: ubuntu-latest, image: '-alpine', docker-platform: linux/amd64 }
-          - { platform: aarch64-linux-gnu, os: ubuntu-24.04-arm, image: '', docker-platform: linux/arm64 }
-          - { platform: aarch64-linux-musl, os: ubuntu-24.04-arm, image: '-alpine', docker-platform: linux/arm64 }
-          - { platform: arm-linux-gnu, os: ubuntu-24.04-arm, image: '', docker-platform: linux/arm/v7 }
-          - { platform: arm-linux-musl, os: ubuntu-24.04-arm, image: '-alpine', docker-platform: linux/arm/v7 }
-        ruby: ['3.1', '3.2', '3.3', '3.4', '4.0']
+          - { platform: x86-linux-gnu, os: ubuntu-latest, image: '', docker-platform: linux/386 }
+          - { platform: x86-linux-musl, os: ubuntu-latest, image: '-alpine', docker-platform: linux/386 }
+          - { platform: aarch64-linux-gnu, os: ubuntu-26.04-arm, image: '', docker-platform: linux/arm64 }
+          - { platform: aarch64-linux-musl, os: ubuntu-26.04-arm, image: '-alpine', docker-platform: linux/arm64 }
+          - { platform: arm-linux-gnu, os: ubuntu-26.04-arm, image: '', docker-platform: linux/arm/v7 }
+          - { platform: arm-linux-musl, os: ubuntu-26.04-arm, image: '-alpine', docker-platform: linux/arm/v7 }
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
-          pattern: gem-{ruby,${{ matrix.target.platform }}}
+          pattern: gem-{ruby,${{ matrix.platform }}}
           path: gems
           merge-multiple: true
       - name: Set up QEMU
-        if: matrix.target.docker-platform == 'linux/arm/v7'
+        if: matrix.docker-platform == 'linux/arm/v7'
         uses: docker/setup-qemu-action@v4
         with:
           platforms: arm
-      - name: Install and test in ruby:${{ matrix.ruby }}${{ matrix.target.image }}
+      - name: Install and test in ruby:${{ matrix.ruby }}${{ matrix.image }} (${{ matrix.docker-platform }})
         run: >-
-          docker run --rm --platform ${{ matrix.target.docker-platform }}
+          docker run --rm --platform ${{ matrix.docker-platform }}
           -v "$PWD:/ox" -w /ox
-          ruby:${{ matrix.ruby }}${{ matrix.target.image }}
-          sh .github/scripts/test-installed-gem.sh ${{ matrix.target.platform }} gems
+          ruby:${{ matrix.ruby }}${{ matrix.image }}
+          sh .github/scripts/test-installed-gem.sh ${{ matrix.platform }} gems
 
   collect-gems:
     name: Collect gems for release
